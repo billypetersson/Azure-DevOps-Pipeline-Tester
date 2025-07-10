@@ -9,7 +9,7 @@
 .PARAMETER Stage
     Pipeline stage to run: Plan, Deploy, or All (default: Plan)
 .PARAMETER Environment
-    Environment to test: dev, tst, uat (auto-detects from branch/folder if not specified)
+    Environment to test: dev, tst, uat, prod (auto-detects from branch/folder if not specified)
 .PARAMETER SkipPSRule
     Skip PSRule analysis
 .PARAMETER SkipDeploy
@@ -21,14 +21,14 @@
 .EXAMPLE
     .\test-pipeline.ps1
     .\test-pipeline.ps1 -Stage Plan -Environment dev
-    .\test-pipeline.ps1 -Stage Deploy -Environment dev -AutoApprove
+    .\test-pipeline.ps1 -Stage Deploy -Environment prod -AutoApprove
 #>
 
 param(
     [ValidateSet("Build", "Validate", "WhatIf", "PSRule", "All")]
     [string]$Step = "All",
     
-    [ValidateSet("dev", "tst", "uat")]
+    [ValidateSet("dev", "tst", "uat", "prod")]
     [string]$Environment,
     
     [string]$Location = "West Europe",
@@ -397,6 +397,8 @@ function Get-EnvironmentConfig {
             $Environment = "tst"
         } elseif ($gitBranch -eq "uat" -or $folderName -like "*uat*") {
             $Environment = "uat"
+        } elseif ($gitBranch -eq "prod" -or $gitBranch -eq "main" -or $gitBranch -eq "master" -or $folderName -like "*prod*") {
+            $Environment = "prod"
         } else {
             $Environment = "dev"  # Default
         }
@@ -1179,45 +1181,7 @@ function Invoke-DebugInfo {
     
     Write-Host ""
 }
-    $endTime = Get-Date
-    $duration = $endTime - $script:StartTime
-    
-    Write-Host ""
-    Write-Host "╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Blue
-    Write-Host "║                      PIPELINE SUMMARY                        ║" -ForegroundColor Blue
-    Write-Host "╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Blue
-    
-    Write-PipelineLog "Pipeline execution completed"
-    Write-PipelineLog "Duration: $($duration.ToString('hh\:mm\:ss'))"
-    Write-PipelineLog "Errors: $($script:ErrorCount)"
-    Write-PipelineLog "Warnings: $($script:WarningCount)"
-    Write-PipelineLog "Environment: $Environment"
-    Write-PipelineLog "Step: $Step"
-    
-    if ($script:ErrorCount -eq 0) {
-        Write-PipelineLog "✅ Pipeline completed successfully!" -Level Success
-    } else {
-        Write-PipelineLog "❌ Pipeline completed with errors" -Level Error
-    }
-    
-    # Save log to file
-    if (!(Test-Path $script:OutputDir)) {
-        New-Item -ItemType Directory -Path $script:OutputDir | Out-Null
-    }
-    
-    $logFile = Join-Path $script:OutputDir "pipeline-log-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
-    $script:LogEntries | Out-File -FilePath $logFile -Encoding UTF8
-    Write-PipelineLog "📄 Log saved to: $logFile"
-    
-    Write-Host ""
-    Write-Host "📁 Output files saved to: $script:OutputDir" -ForegroundColor Green
-    if (Test-Path $script:OutputDir) {
-        Get-ChildItem $script:OutputDir | ForEach-Object {
-            Write-Host "  - $($_.Name)" -ForegroundColor Gray
-        }
-    }
-    
-    Write-Host ""
+
 function Clear-OutputFiles {
     param(
         [switch]$KeepErrorFiles,
@@ -1354,45 +1318,6 @@ function Clear-OutputFiles {
         Write-PipelineLog "No files to clean up"
     }
 }
-    $endTime = Get-Date
-    $duration = $endTime - $script:StartTime
-    
-    Write-Host ""
-    Write-Host "╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Blue
-    Write-Host "║                      PIPELINE SUMMARY                        ║" -ForegroundColor Blue
-    Write-Host "╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Blue
-    
-    Write-PipelineLog "Pipeline execution completed"
-    Write-PipelineLog "Duration: $($duration.ToString('hh\:mm\:ss'))"
-    Write-PipelineLog "Errors: $($script:ErrorCount)"
-    Write-PipelineLog "Warnings: $($script:WarningCount)"
-    Write-PipelineLog "Environment: $Environment"
-    Write-PipelineLog "Stage: $Stage"
-    
-    if ($script:ErrorCount -eq 0) {
-        Write-PipelineLog "✅ Pipeline completed successfully!" -Level Success
-    } else {
-        Write-PipelineLog "❌ Pipeline completed with errors" -Level Error
-    }
-    
-    # Save log to file
-    if (!(Test-Path $script:OutputDir)) {
-        New-Item -ItemType Directory -Path $script:OutputDir | Out-Null
-    }
-    
-    $logFile = Join-Path $script:OutputDir "pipeline-log-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
-    $script:LogEntries | Out-File -FilePath $logFile -Encoding UTF8
-    Write-PipelineLog "📄 Log saved to: $logFile"
-    
-    Write-Host ""
-    Write-Host "📁 Output files saved to: $script:OutputDir" -ForegroundColor Green
-    if (Test-Path $script:OutputDir) {
-        Get-ChildItem $script:OutputDir | ForEach-Object {
-            Write-Host "  - $($_.Name)" -ForegroundColor Gray
-        }
-    }
-    
-    Write-Host ""
 
 function Show-Summary {
     $endTime = Get-Date
