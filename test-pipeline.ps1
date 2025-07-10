@@ -1,27 +1,35 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    Local Azure DevOps Pipeline Tester - Mimics real pipeline structure
+    Local Azure DevOps Pipeline Tester - Plan and Validation Only
 .DESCRIPTION
-    A script that replicates your actual Azure DevOps pipeline stages locally:
-    - Plan stage: Bicep build, validation, provider checks, what-if, PSRule
-    - Deploy stage: Actual deployment (optional, with confirmation)
-.PARAMETER Stage
-    Pipeline stage to run: Plan, Deploy, or All (default: Plan)
+    A script that replicates your actual Azure DevOps pipeline plan stage locally:
+    - Bicep build and validation
+    - Azure provider checks
+    - What-if analysis
+    - PSRule compliance testing
+.PARAMETER Step
+    Pipeline step to run: Build, Validate, WhatIf, PSRule, or All (default: All)
 .PARAMETER Environment
     Environment to test: dev, tst, uat, prod (auto-detects from branch/folder if not specified)
+.PARAMETER SkipBuild
+    Skip Bicep build step
+.PARAMETER SkipValidation
+    Skip Azure validation step
+.PARAMETER SkipWhatIf
+    Skip what-if analysis
 .PARAMETER SkipPSRule
     Skip PSRule analysis
-.PARAMETER SkipDeploy
-    Skip actual deployment in Deploy stage
 .PARAMETER Verbose
     Enable verbose logging
-.PARAMETER AutoApprove
-    Auto-approve deployment without manual confirmation
+.PARAMETER KeepAllFiles
+    Keep all generated files after execution
+.PARAMETER NoCleanup
+    Skip file cleanup entirely
 .EXAMPLE
     .\test-pipeline.ps1
-    .\test-pipeline.ps1 -Stage Plan -Environment dev
-    .\test-pipeline.ps1 -Stage Deploy -Environment prod -AutoApprove
+    .\test-pipeline.ps1 -Step Build -Environment dev
+    .\test-pipeline.ps1 -Step All -Environment prod -Verbose
 #>
 
 param(
@@ -51,9 +59,6 @@ $script:WarningCount = 0
 $script:OutputDir = Join-Path $script:CurrentPath "pipeline-outputs"
 
 # Pipeline configuration - Dynamic loading from config files
-$script:PipelineConfig = @{}
-
-# Pipeline configuration - Dynamic loading from Azure DevOps pipeline files
 $script:PipelineConfig = @{}
 
 function Initialize-PipelineConfig {
@@ -336,7 +341,7 @@ $script:GlobalConfig = @{
     LOG_SEVERITY = "INFO"
     RULE_BASELINE = "Azure.Default"
     RULE_MODULES = "Az.Resources,PSRule.Rules.Azure"
-    RULE_OPTION = ""  # Leave empty to enable auto-discovery
+    RULE_OPTION = ""
     SCOPE = "sub"
     VERSION_ACE_TOOL = "1.6"
     WORKFLOW_VERSION = "v1"
@@ -691,18 +696,12 @@ function Invoke-ProviderCheck {
             return $true
         }
         
-        Write-PipelineLog "🔄 Registering $($providersToRegister.Count) provider(s)..."
-        
+        Write-PipelineLog "Found $($providersToRegister.Count) provider(s) that need registration:" -Level Warning
         foreach ($provider in $providersToRegister) {
-            Write-PipelineLog "Registering $provider..."
-            az provider register --namespace $provider --consent-to-permissions
+            Write-PipelineLog "  - $provider" -Level Warning
         }
+        Write-PipelineLog "Note: This is a validation-only test. No providers will be registered." -Level Info
         
-        # Wait for registration (simplified)
-        Write-PipelineLog "⏳ Waiting for provider registration to complete..."
-        Start-Sleep -Seconds 10  # Simplified wait
-        
-        Write-PipelineLog "✓ Provider registration initiated" -Level Success
         return $true
         
     } catch {
@@ -777,9 +776,16 @@ function Invoke-PSRuleAnalysis {
         $ruleOption = $script:GlobalConfig.RULE_OPTION
         $ruleBaseline = $script:GlobalConfig.RULE_BASELINE
         
-        if (!(Test-Path $ruleOption)) {
-            Write-PipelineLog "✗ PSRule option file not found: $ruleOption" -Level Error
-            return $false
+        # Look for ps-rule.yaml in common locations
+        $psruleFiles = @("ps-rule.yaml", "ps-rule.yml", ".ps-rule/ps-rule.yaml", ".ps-rule/ps-rule.yml")
+        $psruleFile = $psruleFiles | Where-Object { Test-Path $_ } | Select-Object -First 1
+        
+        if (-not $psruleFile) {
+            Write-PipelineLog "No ps-rule.yaml file found. Using default PSRule configuration." -Level Warning
+            Write-PipelineLog "Consider creating a ps-rule.yaml file for custom compliance rules." -Level Info
+        } else {
+            Write-PipelineLog "Using PSRule configuration from: $psruleFile"
+            $ruleOption = $psruleFile
         }
         
         Write-PipelineLog "Running PSRule analysis..."
@@ -787,7 +793,11 @@ function Invoke-PSRuleAnalysis {
         Write-PipelineLog "Baseline: $ruleBaseline"
         
         # Run PSRule analysis
-        $results = Invoke-PSRule -InputPath . -Module PSRule.Rules.Azure -Option $ruleOption -Baseline $ruleBaseline
+        if ($psruleFile) {
+            $results = Invoke-PSRule -InputPath . -Module PSRule.Rules.Azure -Option $ruleOption -Baseline $ruleBaseline
+        } else {
+            $results = Invoke-PSRule -InputPath . -Module PSRule.Rules.Azure -Baseline $ruleBaseline
+        }
         
         # Analyze results
         $passed = ($results | Where-Object { $_.Outcome -eq "Pass" }).Count
@@ -842,49 +852,48 @@ function Invoke-PlanStage {
     $stepNumber++
     
     # Step 3: Checkout repos
-    Write-Host "[$stepNumber] Checkout mdp@dev..." -ForegroundColor Cyan
-    Write-PipelineLog "Checkout mdp@dev - Repository checkout completed"
+    Write-Host "[$stepNumber] Checkout repositories..." -ForegroundColor Cyan
+    Write-PipelineLog "Checkout repositories - Repository checkout completed"
     $stepNumber++
     
-    Write-Host "[$stepNumber] Checkout templates" -ForegroundColor Cyan
-    Write-PipelineLog "Checkout templates - Template repository checkout completed"
-    $stepNumber++
-    
-    # Step 5: Bicep Build
+    # Step 4: Bicep Build
     Write-Host "[$stepNumber] Bicep build" -ForegroundColor Cyan
-    $buildSuccess = Invoke-BicepBuild -config $config
-    $success = $success -and $buildSuccess
+    if (-not $SkipBuild) {
+        $buildSuccess = Invoke-BicepBuild -config $config
+        $success = $success -and $buildSuccess
+    } else {
+        Write-PipelineLog "Bicep build skipped"
+    }
     $stepNumber++
     
-    # Step 6: Bicep Build Params
-    Write-Host "[$stepNumber] Bicep build params" -ForegroundColor Cyan
-    Write-PipelineLog "Bicep build params - Parameter file build completed in previous step"
-    $stepNumber++
-    
-    # Step 7: Validation
+    # Step 5: Validation
     Write-Host "[$stepNumber] Validate" -ForegroundColor Cyan
-    $validationResult = Invoke-Validation -config $config
-    $success = $success -and $validationResult.Success
+    if (-not $SkipValidation) {
+        $validationResult = Invoke-Validation -config $config
+        $success = $success -and $validationResult.Success
+    } else {
+        Write-PipelineLog "Validation skipped"
+        $validationResult = @{ Success = $true; Providers = @() }
+    }
     $stepNumber++
     
-    # Step 8: Register Azure providers
-    Write-Host "[$stepNumber] Register Azure providers" -ForegroundColor Cyan
+    # Step 6: Register Azure providers (check only)
+    Write-Host "[$stepNumber] Check Azure providers" -ForegroundColor Cyan
     $providerSuccess = Invoke-ProviderCheck -config $config -discoveredProviders $validationResult.Providers
     $success = $success -and $providerSuccess
     $stepNumber++
     
-    # Step 9: What-If
-    Write-Host "[$stepNumber] What-if" -ForegroundColor Cyan
-    $whatIfSuccess = Invoke-WhatIfAnalysis -config $config
-    $success = $success -and $whatIfSuccess
+    # Step 7: What-If
+    Write-Host "[$stepNumber] What-if analysis" -ForegroundColor Cyan
+    if (-not $SkipWhatIf) {
+        $whatIfSuccess = Invoke-WhatIfAnalysis -config $config
+        $success = $success -and $whatIfSuccess
+    } else {
+        Write-PipelineLog "What-if analysis skipped"
+    }
     $stepNumber++
     
-    # Step 10: Configure PSRule
-    Write-Host "[$stepNumber] Configure PSRule" -ForegroundColor Cyan
-    Write-PipelineLog "Configure PSRule - Setting up compliance analysis"
-    $stepNumber++
-    
-    # Step 11: PSRule Analysis
+    # Step 8: PSRule Analysis
     Write-Host "[$stepNumber] PSRule analysis" -ForegroundColor Cyan
     if (-not $SkipPSRule) {
         $psruleSuccess = Invoke-PSRuleAnalysis -config $config
@@ -894,12 +903,7 @@ function Invoke-PlanStage {
     }
     $stepNumber++
     
-    # Step 12: Generate PSRule report
-    Write-Host "[$stepNumber] Generate PSRule report" -ForegroundColor Cyan
-    Write-PipelineLog "Generate PSRule report - Compliance report generated"
-    $stepNumber++
-    
-    # Step 13: Show debug information
+    # Step 9: Show debug information
     Write-Host "[$stepNumber] Show debug information" -ForegroundColor Cyan
     if ($Verbose -or $success -eq $false) {
         Invoke-DebugInfo -config $config
@@ -908,191 +912,26 @@ function Invoke-PlanStage {
     }
     $stepNumber++
     
-    # Step 14: Upload pipeline logs
+    # Step 10: Upload pipeline logs
     Write-Host "[$stepNumber] Upload pipeline logs" -ForegroundColor Cyan
     Write-PipelineLog "Upload pipeline logs - Logs saved to pipeline-outputs directory"
     $stepNumber++
     
-    # Step 15: Microsoft Defender (post-job)
+    # Step 11: Microsoft Defender (post-job)
     Write-Host "[$stepNumber] Microsoft Defender..." -ForegroundColor Cyan
     Write-PipelineLog "Microsoft Defender post-scan - Simulated"
     $stepNumber++
     
-    # Step 16: Post-job cleanup
-    Write-Host "[$stepNumber] Post-job: Checkout..." -ForegroundColor Cyan
+    # Step 12: Post-job cleanup
+    Write-Host "[$stepNumber] Post-job cleanup" -ForegroundColor Cyan
     Write-PipelineLog "Post-job cleanup - Repository cleanup completed"
     $stepNumber++
     
-    Write-Host "[$stepNumber] Post-job: Checkout..." -ForegroundColor Cyan
-    Write-PipelineLog "Post-job cleanup - Template repository cleanup completed"
-    $stepNumber++
-    
-    # Step 18: Finalize Job
+    # Step 13: Finalize Job
     Write-Host "[$stepNumber] Finalize Job" -ForegroundColor Cyan
     Write-PipelineLog "Finalize Job - Plan stage completed"
     
     return $success
-}
-
-function Invoke-DeploymentStage {
-    param($config)
-    
-    Write-Host ""
-    Write-Host "🚀 DEPLOYMENT STAGE" -ForegroundColor Magenta
-    Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor Magenta
-    
-    if ($SkipDeploy) {
-        Write-PipelineLog "Skipping actual deployment" -Level Warning
-        return $true
-    }
-    
-    $stepNumber = 1
-    
-    # Step 1: Initialize job
-    Write-Host ""
-    Write-Host "[$stepNumber] Initialize job" -ForegroundColor Cyan
-    Write-PipelineLog "Initialize job - Setting up deployment environment"
-    $stepNumber++
-    
-    # Step 2: Microsoft Defender
-    Write-Host "[$stepNumber] Microsoft Defender..." -ForegroundColor Cyan
-    Write-PipelineLog "Microsoft Defender scan - Simulated"
-    $stepNumber++
-    
-    # Step 3: Checkout repos
-    Write-Host "[$stepNumber] Checkout mdp@dev..." -ForegroundColor Cyan
-    Write-PipelineLog "Checkout mdp@dev - Repository checkout completed"
-    $stepNumber++
-    
-    Write-Host "[$stepNumber] Checkout templates" -ForegroundColor Cyan
-    Write-PipelineLog "Checkout templates - Template repository checkout completed"
-    $stepNumber++
-    
-    # Manual approval simulation
-    if (-not $AutoApprove) {
-        Write-Host ""
-        Write-Host "⚠️  MANUAL APPROVAL REQUIRED" -ForegroundColor Yellow
-        Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor Yellow
-        Write-Host "This will deploy infrastructure to:" -ForegroundColor Yellow
-        Write-Host "  Environment: $($config.ENVIRONMENT)" -ForegroundColor Yellow
-        Write-Host "  Subscription: $($config.AZURE_SUBSCRIPTION_ID)" -ForegroundColor Yellow
-        Write-Host "  Location: $($config.LOCATION)" -ForegroundColor Yellow
-        Write-Host ""
-        
-        $response = Read-Host "Do you want to proceed with deployment? (y/N)"
-        if ($response -ne 'y' -and $response -ne 'Y') {
-            Write-PipelineLog "Deployment cancelled by user" -Level Warning
-            return $false
-        }
-    }
-    
-    # Step 5: Deploy infrastructure
-    Write-Host "[$stepNumber] Deploy infrastructure" -ForegroundColor Cyan
-    $deploySuccess = Invoke-ActualDeployment -config $config
-    $stepNumber++
-    
-    # Step 6: Show debug information
-    Write-Host "[$stepNumber] Show debug information" -ForegroundColor Cyan
-    if ($Verbose -or $deploySuccess -eq $false) {
-        Invoke-DebugInfo -config $config
-    } else {
-        Write-PipelineLog "Show debug information - Skipped (use -Verbose to enable)"
-    }
-    $stepNumber++
-    
-    # Step 7: Publish pipeline artifacts
-    Write-Host "[$stepNumber] Publish pipeline artifacts" -ForegroundColor Cyan
-    Write-PipelineLog "Publish pipeline artifacts - Artifacts saved to pipeline-outputs"
-    $stepNumber++
-    
-    # Step 8: Pipeline summary
-    Write-Host "[$stepNumber] Pipeline summary" -ForegroundColor Cyan
-    Write-PipelineLog "Pipeline summary - Deployment stage completed"
-    $stepNumber++
-    
-    # Step 9: Microsoft Defender (post-job)
-    Write-Host "[$stepNumber] Microsoft Defender..." -ForegroundColor Cyan
-    Write-PipelineLog "Microsoft Defender post-scan - Simulated"
-    $stepNumber++
-    
-    # Step 10: Post-job cleanup
-    Write-Host "[$stepNumber] Post-job: Checkout..." -ForegroundColor Cyan
-    Write-PipelineLog "Post-job cleanup - Repository cleanup completed"
-    $stepNumber++
-    
-    Write-Host "[$stepNumber] Post-job: Checkout..." -ForegroundColor Cyan
-    Write-PipelineLog "Post-job cleanup - Template repository cleanup completed"
-    $stepNumber++
-    
-    # Step 12: Finalize Job
-    Write-Host "[$stepNumber] Finalize Job" -ForegroundColor Cyan
-    Write-PipelineLog "Finalize Job - Deployment stage completed"
-    
-    return $deploySuccess
-}
-
-function Invoke-ActualDeployment {
-    param($config)
-    
-    Write-PipelineLog "═══ INFRASTRUCTURE DEPLOYMENT ═══" -Level Info
-    
-    $template = $config.TEMPLATE
-    $templateParams = $config.TEMPLATE_PARAMETERS
-    $subscriptionId = $config.AZURE_SUBSCRIPTION_ID
-    $location = $config.LOCATION
-    
-    try {
-        az account set -s $subscriptionId
-        
-        $deploymentName = "deploy_$(Get-Date -Format 'yyyyMMddHHmmss')"
-        $cmd = "az deployment sub create --name $deploymentName --location $location --template-file $template"
-        
-        if ($templateParams) {
-            $cmd += " --parameters $templateParams"
-        }
-        
-        Write-PipelineLog "🚀 Starting infrastructure deployment"
-        Write-PipelineLog "Deployment name: $deploymentName"
-        Write-PipelineLog "Template: $template"
-        Write-PipelineLog "Parameters: $templateParams"
-        Write-PipelineLog "Subscription: $subscriptionId"
-        Write-PipelineLog "Location: $location"
-        Write-PipelineLog "Running: $cmd"
-        
-        $startTime = Get-Date
-        $result = & cmd /c "$cmd 2>&1"
-        $exitCode = $LASTEXITCODE
-        $endTime = Get-Date
-        $duration = $endTime - $startTime
-        
-        if ($exitCode -eq 0) {
-            Write-PipelineLog "✅ Deployment completed successfully!" -Level Success
-            Write-PipelineLog "⏱️ Duration: $($duration.ToString('mm\:ss'))"
-            
-            # Save deployment result
-            $result -join "`n" | Out-File -FilePath (Join-Path $script:OutputDir "deployment-result.json") -Encoding UTF8
-            
-            return $true
-        } else {
-            Write-PipelineLog "❌ Deployment failed after $($duration.ToString('mm\:ss'))" -Level Error
-            
-            # Show the full error message
-            if ($result) {
-                $errorMsg = $result -join "`n"
-                Write-PipelineLog "Full error details:" -Level Error
-                Write-Host $errorMsg -ForegroundColor Red
-                
-                # Save error details
-                $errorMsg | Out-File -FilePath (Join-Path $script:OutputDir "deployment-error.txt") -Encoding UTF8
-                Write-PipelineLog "Error details saved to: deployment-error.txt" -Level Info
-            }
-            
-            return $false
-        }
-    } catch {
-        Write-PipelineLog "✗ Deployment error: $($_.Exception.Message)" -Level Error
-        return $false
-    }
 }
 
 function Invoke-DebugInfo {

@@ -1,8 +1,8 @@
-# High-Level Design: Azure DevOps Pipeline Tester
+# High-Level Design: Azure DevOps Pipeline Tester (Plan Only)
 
 ## 1. Overview
 
-The Azure DevOps Pipeline Tester is a local PowerShell-based solution that replicates the exact execution flow of Azure DevOps pipelines for infrastructure-as-code testing. It enables developers to validate Bicep templates, run compliance checks, and preview deployments locally before committing to the actual CI/CD pipeline.
+The Azure DevOps Pipeline Tester is a local PowerShell-based solution that replicates the plan and validation stages of Azure DevOps pipelines for infrastructure-as-code testing. It enables developers to validate Bicep templates, run compliance checks, and preview deployments locally before committing to the actual CI/CD pipeline - without performing actual deployments.
 
 ## 2. Architecture
 
@@ -23,7 +23,7 @@ The Azure DevOps Pipeline Tester is a local PowerShell-based solution that repli
 │              Azure DevOps Pipeline Tester                   │
 ├─────────────────────────────────────────────────────────────┤
 │  ┌─────────────────┐    ┌─────────────────┐                │
-│  │  Configuration  │    │    Stage        │                │
+│  │  Configuration  │    │    Plan Stage   │                │
 │  │   Management    │◄──►│   Orchestrator  │                │
 │  └─────────────────┘    └─────────────────┘                │
 │                           │                                 │
@@ -35,24 +35,18 @@ The Azure DevOps Pipeline Tester is a local PowerShell-based solution that repli
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                   Pipeline Execution Engine                 │
+│                   Plan Execution Engine                     │
 ├─────────────────────────────────────────────────────────────┤
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────┐ │
-│  │  Plan Stage     │  │  Approval       │  │ Deploy      │ │
-│  │  Executor       │─►│  Gateway        │─►│ Stage       │ │
-│  └─────────────────┘  └─────────────────┘  │ Executor    │ │
+│  │  Build Engine   │  │ Validation      │  │ What-If     │ │
+│  │                 │─►│ Engine          │─►│ Analysis    │ │
+│  └─────────────────┘  └─────────────────┘  │ Engine      │ │
 │           │                                └─────────────┘ │
 │           ▼                                                 │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────┐ │
-│  │ Bicep Build     │  │ Azure Provider  │  │ What-If     │ │
-│  │ Engine          │  │ Registration    │  │ Analysis    │ │
+│  │ Bicep Build     │  │ Azure Provider  │  │ PSRule      │ │
+│  │ Engine          │  │ Check           │  │ Compliance  │ │
 │  └─────────────────┘  └─────────────────┘  └─────────────┘ │
-│           │                                                 │
-│           ▼                                                 │
-│  ┌─────────────────┐  ┌─────────────────┐                  │
-│  │ Template        │  │ PSRule          │                  │
-│  │ Validation      │  │ Compliance      │                  │
-│  └─────────────────┘  └─────────────────┘                  │
 └─────────────────────────────────────────────────────────────┘
                            │
                            ▼
@@ -82,7 +76,7 @@ The Azure DevOps Pipeline Tester is a local PowerShell-based solution that repli
    - Pipeline variable management
    - Template and parameter file path resolution
 
-2. **Stage Orchestrator**
+2. **Plan Stage Orchestrator**
    - Pipeline stage execution flow
    - Step-by-step progress tracking
    - Error handling and rollback
@@ -102,23 +96,25 @@ The Azure DevOps Pipeline Tester is a local PowerShell-based solution that repli
 
 #### Execution Engine Components
 
-1. **Plan Stage Executor**
-   - 18-step execution flow matching Azure DevOps
-   - Bicep template building and validation
-   - Azure resource provider management
-   - Compliance analysis orchestration
+1. **Build Engine**
+   - Bicep template compilation
+   - Parameter file compilation
+   - Output artifact management
 
-2. **Deploy Stage Executor**
-   - 12-step deployment flow
-   - Manual approval simulation
-   - Infrastructure deployment execution
-   - Post-deployment verification
+2. **Validation Engine**
+   - Azure deployment validation
+   - Resource provider discovery
+   - Subscription-level validation
 
-3. **Specialized Engines**
-   - **Bicep Build Engine**: Template and parameter compilation
-   - **Template Validation**: Azure deployment validation
-   - **What-If Analysis**: Change preview generation
-   - **PSRule Compliance**: Security and governance checks
+3. **What-If Analysis Engine**
+   - Change preview generation
+   - Resource impact analysis
+   - Deployment simulation
+
+4. **PSRule Compliance Engine**
+   - Security baseline enforcement
+   - Governance rule validation
+   - Compliance reporting
 
 ## 3. Data Flow
 
@@ -137,12 +133,12 @@ Input Files          Processing Steps                Output Artifacts
                                 ▼
 ┌─────────────┐     ┌─────────────────────────┐     ┌─────────────────┐
 │ Azure       │────►│ 3. Template Validation  │────►│ validation-     │
-│ Subscription│     └─────────────────────────┘     │ error.txt       │
+│ Subscription│     └─────────────────────────┘     │ results.txt     │
 └─────────────┘                 │                   └─────────────────┘
                                 ▼
 ┌─────────────┐     ┌─────────────────────────┐     ┌─────────────────┐
-│ Provider    │────►│ 4. Provider             │────►│ provider-       │
-│ Registry    │     │    Registration         │     │ status.log      │
+│ Provider    │────►│ 4. Provider Check       │────►│ provider-       │
+│ Registry    │     │    (Status Only)        │     │ status.log      │
 └─────────────┘     └─────────────────────────┘     └─────────────────┘
                                 │
                                 ▼
@@ -155,28 +151,6 @@ Input Files          Processing Steps                Output Artifacts
 │ ps-rule     │────►│ 6. Compliance Analysis  │────►│ psrule-         │
 │ .yaml       │     └─────────────────────────┘     │ results.json    │
 └─────────────┘                                     └─────────────────┘
-```
-
-### 3.2 Deploy Stage Flow
-
-```
-Plan Artifacts       Deployment Steps              Deployment Outputs
-┌─────────────┐     ┌─────────────────────────┐     ┌─────────────────┐
-│ Validated   │────►│ 1. Manual Approval      │────►│ Approval        │
-│ Templates   │     │    (or Auto-approve)    │     │ Decision        │
-└─────────────┘     └─────────────────────────┘     └─────────────────┘
-                                 │
-                                ▼
-┌─────────────┐     ┌─────────────────────────┐     ┌─────────────────┐
-│ Azure       │────►│ 2. Infrastructure       │────►│ deployment-     │
-│ Subscription│     │    Deployment           │     │ result.json     │
-└─────────────┘     └─────────────────────────┘     └─────────────────┘
-                                 │
-                                ▼
-┌─────────────┐     ┌─────────────────────────┐     ┌─────────────────┐
-│ Deployment  │────►│ 3. Post-Deployment      │────►│ deployment-     │
-│ Status      │     │    Verification         │     │ summary.log     │
-└─────────────┘     └─────────────────────────┘     └─────────────────┘
 ```
 
 ## 4. Configuration Management
@@ -232,7 +206,7 @@ Global Settings:
 3. **Execution Errors**
    - Bicep compilation failures
    - Azure validation errors
-   - Deployment failures
+   - PSRule compliance failures
 
 4. **System Errors**
    - File system access issues
@@ -314,7 +288,7 @@ Error Detection → Categorization → Logging → User Notification → Recover
    - Custom compliance checks
    - Organization-specific validations
 
-2. **Additional Pipeline Stages**
+2. **Additional Pipeline Steps**
    - Cost analysis integration
    - Security scanning
    - Documentation generation
@@ -371,9 +345,44 @@ Log Outputs:
 - Update notification system
 - Feature flag management
 
-## 11. Future Enhancements
+## 11. Plan Stage Workflow
 
-### 11.1 Planned Features
+### 11.1 Plan Stage Steps (13 Steps)
+
+The plan stage mirrors your Azure DevOps plan stage exactly:
+
+1. **Initialize job** - Environment setup
+2. **Microsoft Defender** - Security scanning (simulated)
+3. **Checkout repositories** - Repository preparation
+4. **Bicep build** - Template compilation
+5. **Validate** - Azure deployment validation
+6. **Check Azure providers** - Resource provider verification (status only)
+7. **What-if analysis** - Change analysis and preview
+8. **PSRule analysis** - Security and governance checks
+9. **Show debug information** - Diagnostic output (verbose mode)
+10. **Upload pipeline logs** - Log management
+11. **Microsoft Defender** - Post-scan (simulated)
+12. **Post-job cleanup** - Resource cleanup
+13. **Finalize Job** - Stage completion
+
+## 12. Key Differences from Full Pipeline
+
+### 12.1 Removed Components
+
+- **Deploy Stage**: No actual infrastructure deployment
+- **Manual Approval**: No approval gates (plan only)
+- **Post-Deployment Verification**: No deployment validation
+- **Infrastructure State Management**: No state tracking
+
+### 12.2 Modified Components
+
+- **Provider Registration**: Check status only, no actual registration
+- **What-If Analysis**: Preview only, no deployment execution
+- **Validation**: Template validation only, no deployment execution
+
+## 13. Future Enhancements
+
+### 13.1 Planned Features
 
 1. **Enhanced Reporting**
    - HTML dashboard generation
@@ -390,9 +399,53 @@ Log Outputs:
    - Smart caching
    - Parallel execution
 
-### 11.2 Scalability Considerations
+### 13.2 Scalability Considerations
 
 - Multi-repository support
 - Enterprise-scale deployment
 - Team collaboration features
 - Centralized configuration management
+
+## 14. Testing Strategy
+
+### 14.1 Validation Scope
+
+- Template syntax validation
+- Parameter validation
+- Azure resource validation
+- Compliance rule validation
+- What-if change analysis
+
+### 14.2 Safety Features
+
+- No actual deployments
+- Read-only Azure operations
+- Safe failure modes
+- Comprehensive logging
+
+## 15. Use Cases
+
+### 15.1 Primary Use Cases
+
+1. **Local Development Testing**
+   - Validate templates before commit
+   - Test parameter files
+   - Check compliance rules
+
+2. **CI/CD Integration**
+   - Pre-commit hooks
+   - Pull request validation
+   - Automated testing
+
+3. **Learning and Training**
+   - Safe environment for learning
+   - Understanding pipeline behavior
+   - Template development practice
+
+### 15.2 Benefits
+
+- Fast feedback loops
+- No Azure costs for testing
+- Safe template validation
+- Comprehensive compliance checking
+- Local development workflow integration

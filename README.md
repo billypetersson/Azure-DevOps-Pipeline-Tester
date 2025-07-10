@@ -1,21 +1,21 @@
-# Azure DevOps Pipeline Tester
+# Azure DevOps Pipeline Tester (Plan Only)
 
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-blue.svg)](https://github.com/PowerShell/PowerShell)
 [![Azure CLI](https://img.shields.io/badge/Azure%20CLI-Latest-blue.svg)](https://docs.microsoft.com/en-us/cli/azure/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-A comprehensive local testing solution that replicates Azure DevOps pipeline execution for infrastructure-as-code validation. Test your Bicep templates, run compliance checks, and preview deployments locally before committing to your CI/CD pipeline.
+A comprehensive local testing solution that replicates Azure DevOps pipeline plan and validation stages for infrastructure-as-code testing. Test your Bicep templates, run compliance checks, and preview deployments locally before committing to your CI/CD pipeline - **without performing actual deployments**.
 
 ## 🎯 Overview
 
-The Azure DevOps Pipeline Tester mirrors the exact execution flow of your real Azure DevOps pipelines, providing:
+The Azure DevOps Pipeline Tester (Plan Only) mirrors the exact execution flow of your real Azure DevOps plan stages, providing:
 
-- **18-step Plan Stage** matching your actual pipeline
-- **12-step Deploy Stage** with approval gates
+- **13-step Plan Stage** matching your actual pipeline
 - **Real-time validation** against Azure subscriptions
 - **Comprehensive compliance checking** with PSRule
 - **What-if analysis** for deployment preview
 - **Detailed logging and reporting** for troubleshooting
+- **Safe testing** with no actual deployments
 
 ## 📋 Table of Contents
 
@@ -24,23 +24,23 @@ The Azure DevOps Pipeline Tester mirrors the exact execution flow of your real A
 - [Quick Start](#-quick-start)
 - [Usage Examples](#-usage-examples)
 - [Configuration](#-configuration)
-- [Pipeline Stages](#-pipeline-stages)
+- [Pipeline Steps](#-pipeline-steps)
 - [Output Files](#-output-files)
 - [Troubleshooting](#-troubleshooting)
 - [Contributing](#-contributing)
 
 ## ✨ Features
 
-### 🔄 **Complete Pipeline Simulation**
+### 🔄 **Complete Plan Stage Simulation**
 - Exact step-by-step execution matching Azure DevOps
-- Plan → Approval → Deploy workflow
+- Plan stage only - **no actual deployments**
 - Real Azure CLI integration
 - Authentic error handling
 
 ### 🏗️ **Infrastructure Validation**
 - Bicep template compilation and validation
 - Azure subscription-level deployment validation
-- Resource provider registration checks
+- Resource provider registration checks (status only)
 - What-if analysis with change preview
 
 ### 📏 **Compliance & Security**
@@ -50,7 +50,7 @@ The Azure DevOps Pipeline Tester mirrors the exact execution flow of your real A
 - Custom compliance rule support
 
 ### 🎛️ **Environment Management**
-- Multi-environment support (dev/test/uat)
+- Multi-environment support (dev/test/uat/prod)
 - Automatic environment detection
 - Git branch-based configuration
 - Override capabilities
@@ -60,6 +60,12 @@ The Azure DevOps Pipeline Tester mirrors the exact execution flow of your real A
 - Detailed error logging
 - Performance metrics
 - Structured output files
+
+### 🛡️ **Safety Features**
+- **No actual deployments** - plan and validation only
+- Read-only Azure operations
+- Safe failure modes
+- Comprehensive logging
 
 ## 🛠️ Prerequisites
 
@@ -100,6 +106,9 @@ az account set --subscription "your-subscription-id"
 
 # With specific environment
 .\test-pipeline.ps1 -Environment dev
+
+# Run specific step
+.\test-pipeline.ps1 -Step Build
 ```
 
 ### 4. Review Results
@@ -117,8 +126,14 @@ az account set --subscription "your-subscription-id"
 ### Basic Operations
 
 ```powershell
-# Run plan stage only (safest for testing)
-.\test-pipeline.ps1 -Stage Plan
+# Run all plan steps (default)
+.\test-pipeline.ps1
+
+# Run specific step
+.\test-pipeline.ps1 -Step Build
+.\test-pipeline.ps1 -Step Validate
+.\test-pipeline.ps1 -Step WhatIf
+.\test-pipeline.ps1 -Step PSRule
 
 # Run specific environment
 .\test-pipeline.ps1 -Environment dev
@@ -130,27 +145,17 @@ az account set --subscription "your-subscription-id"
 ### Advanced Usage
 
 ```powershell
-# Full pipeline with auto-approval (careful!)
-.\test-pipeline.ps1 -Stage All -AutoApprove
-
-# Skip compliance checking for faster testing
+# Skip specific steps
+.\test-pipeline.ps1 -SkipBuild
+.\test-pipeline.ps1 -SkipValidation
+.\test-pipeline.ps1 -SkipWhatIf
 .\test-pipeline.ps1 -SkipPSRule
 
-# Deploy stage only (after successful plan)
-.\test-pipeline.ps1 -Stage Deploy -Environment dev
-```
+# Keep all generated files
+.\test-pipeline.ps1 -KeepAllFiles
 
-### Development Workflow
-
-```powershell
-# Quick validation during development
-.\test-pipeline.ps1 -Stage Plan -SkipPSRule
-
-# Full validation before commit
-.\test-pipeline.ps1 -Stage Plan -Verbose
-
-# Test deployment to dev environment
-.\test-pipeline.ps1 -Stage All -Environment dev
+# Skip cleanup entirely
+.\test-pipeline.ps1 -NoCleanup
 ```
 
 ## ⚙️ Configuration
@@ -163,9 +168,10 @@ The script automatically detects your environment based on:
    - `dev` branch → dev environment
    - `tst` branch → test environment  
    - `uat` branch → uat environment
+   - `prod` branch → prod environment
 
 2. **Folder Context**
-   - Folders containing `dev`, `test`, `uat` in name
+   - Folders containing `dev`, `test`, `uat`, `prod` in name
 
 3. **Manual Override**
    - Use `-Environment` parameter to specify
@@ -178,17 +184,19 @@ Each environment maps to specific Azure resources:
 |-------------|--------------|----------|------------|
 | dev | Development subscription | main.bicep | dev.bicepparam |
 | tst | Test subscription | main.bicep | test.bicepparam |
-| uat | UAT subscription | main.bicep | uat.bicepparam |
+| uat | Acceptance subscription | main.bicep | uat.bicepparam |
+| prod | Production subscription | main.bicep | prod.bicepparam |
 
 ### File Structure Requirements
 
 ```
 your-infrastructure-repo/
-├── main.bicep                 # Main template
+├── main.bicep                # Main template
 ├── dev.bicepparam            # Dev parameters
 ├── test.bicepparam           # Test parameters
 ├── uat.bicepparam            # UAT parameters
-├── ps-rule.yaml              # Compliance rules
+├── prod.bicepparam           # Prod parameters
+├── ps-rule.yaml              # Compliance rules (optional)
 ├── test-pipeline.ps1         # This script
 └── pipeline-outputs/         # Generated outputs
     ├── main.json             # Compiled template
@@ -198,44 +206,32 @@ your-infrastructure-repo/
     └── pipeline-log-*.txt    # Execution logs
 ```
 
-## 🎭 Pipeline Stages
+## 🎭 Pipeline Steps
 
-### Plan Stage (18 Steps)
+### Plan Stage (13 Steps)
 
 Mirrors your Azure DevOps plan stage exactly:
 
 1. **Initialize job** - Environment setup
 2. **Microsoft Defender** - Security scanning (simulated)
-3. **Checkout repos** - Repository preparation
+3. **Checkout repositories** - Repository preparation
 4. **Bicep build** - Template compilation
-5. **Bicep build params** - Parameter compilation
-6. **Validate** - Azure deployment validation
-7. **Register Azure providers** - Resource provider setup
-8. **What-if** - Change analysis
-9. **Configure PSRule** - Compliance setup
-10. **PSRule analysis** - Security and governance checks
-11. **Generate PSRule report** - Compliance reporting
-12. **Show debug information** - Diagnostic output
-13. **Upload pipeline logs** - Log management
-14. **Microsoft Defender** - Post-scan (simulated)
-15. **Post-job cleanup** - Resource cleanup
-16. **Finalize Job** - Stage completion
+5. **Validate** - Azure deployment validation
+6. **Check Azure providers** - Resource provider verification (status only)
+7. **What-if analysis** - Change analysis and preview
+8. **PSRule analysis** - Security and governance checks
+9. **Show debug information** - Diagnostic output (verbose mode)
+10. **Upload pipeline logs** - Log management
+11. **Microsoft Defender** - Post-scan (simulated)
+12. **Post-job cleanup** - Resource cleanup
+13. **Finalize Job** - Stage completion
 
-### Deploy Stage (12 Steps)
+### Safety Features
 
-Replicates your deployment workflow:
-
-1. **Initialize job** - Deployment setup
-2. **Microsoft Defender** - Security validation
-3. **Checkout repos** - Code preparation
-4. **Manual approval** - Deployment gate (unless auto-approved)
-5. **Deploy infrastructure** - Actual Azure deployment
-6. **Show debug information** - Deployment diagnostics
-7. **Publish pipeline artifacts** - Output management
-8. **Pipeline summary** - Execution summary
-9. **Microsoft Defender** - Post-deployment scan
-10. **Post-job cleanup** - Resource cleanup
-11. **Finalize Job** - Stage completion
+- **No actual deployments** - all operations are validation only
+- **Provider registration** - check status only, no actual registration
+- **What-if analysis** - preview only, no execution
+- **Safe failure modes** - graceful error handling
 
 ## 📁 Output Files
 
@@ -250,10 +246,6 @@ The script generates comprehensive outputs in the `pipeline-outputs/` directory:
 - `validation-error.txt` - Validation failure details (if any)
 - `psrule-results.json` - Compliance analysis results
 
-### Deployment Outputs
-- `deployment-result.json` - Deployment response (deploy stage)
-- `deployment-error.txt` - Deployment failure details (if any)
-
 ### Execution Logs
 - `pipeline-log-YYYYMMDD-HHMMSS.txt` - Complete execution log
 - Timestamped entries with severity levels
@@ -261,22 +253,25 @@ The script generates comprehensive outputs in the `pipeline-outputs/` directory:
 
 ## 🔧 Parameters Reference
 
-### Stage Parameters
+### Step Parameters
 ```powershell
--Stage <Plan|Deploy|All>     # Pipeline stage to execute
+-Step <Build|Validate|WhatIf|PSRule|All>  # Pipeline step to execute
 ```
 
 ### Environment Parameters
 ```powershell
--Environment <dev|tst|uat>   # Target environment
+-Environment <dev|tst|uat|prod>           # Target environment
 ```
 
 ### Control Parameters
 ```powershell
+-SkipBuild                    # Skip Bicep build step
+-SkipValidation              # Skip Azure validation
+-SkipWhatIf                  # Skip what-if analysis
 -SkipPSRule                  # Skip compliance analysis
--SkipDeploy                  # Skip actual deployment
--AutoApprove                 # Auto-approve deployment
 -Verbose                     # Enable verbose logging
+-KeepAllFiles               # Keep all generated files
+-NoCleanup                  # Skip file cleanup entirely
 ```
 
 ## 🐛 Troubleshooting
@@ -305,7 +300,7 @@ The script generates comprehensive outputs in the `pipeline-outputs/` directory:
 ```
 Failed to deserialize PSRule results
 ```
-**Solution:** Check `ps-rule.yaml` configuration file exists and is valid
+**Solution:** Check if `ps-rule.yaml` configuration file exists and is valid
 
 ### Debug Mode
 
@@ -365,7 +360,7 @@ Integrate with your CI/CD pipeline:
   inputs:
     targetType: 'filePath'
     filePath: 'test-pipeline.ps1'
-    arguments: '-Stage Plan -Environment $(Environment)'
+    arguments: '-Step All -Environment $(Environment)'
     failOnStderr: true
 ```
 
@@ -376,7 +371,7 @@ Add as a pre-commit hook:
 ```bash
 #!/bin/sh
 # .git/hooks/pre-commit
-pwsh ./test-pipeline.ps1 -Stage Plan -SkipPSRule
+pwsh ./test-pipeline.ps1 -Step All -SkipPSRule
 ```
 
 ## 🤝 Contributing
@@ -402,6 +397,29 @@ pwsh ./test-pipeline.ps1 -Stage Plan -SkipPSRule
 - Add comprehensive error handling
 - Include detailed logging
 - Document new features
+
+## ⚠️ Important Notes
+
+### Safety First
+- **This script performs NO actual deployments**
+- All operations are validation and preview only
+- Safe to run in any environment
+- No Azure resources will be created or modified
+
+### What This Script Does NOT Do
+- ❌ Deploy infrastructure
+- ❌ Modify Azure resources
+- ❌ Register resource providers
+- ❌ Create resource groups
+- ❌ Execute ARM deployments
+
+### What This Script DOES Do
+- ✅ Validate Bicep templates
+- ✅ Check Azure permissions
+- ✅ Preview deployment changes
+- ✅ Run compliance checks
+- ✅ Generate reports
+- ✅ Test pipeline configuration
 
 ## 📄 License
 
@@ -442,4 +460,4 @@ When reporting issues, please include:
 
 **Made with ❤️ for Azure DevOps and Infrastructure as Code enthusiasts**
 
-*Bringing Azure DevOps pipeline testing to your local development environment*
+*Bringing Azure DevOps pipeline testing to your local development environment - safely and efficiently*
